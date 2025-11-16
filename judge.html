@@ -5,7 +5,7 @@
   <meta name="viewport"
         content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-  <title>Face Recognize App (Mobile+Sound)</title>
+  <title>Face Recognize App (Full Integration)</title>
 
   <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 
@@ -49,7 +49,7 @@
       width: 100%;
       height: auto;
       border-radius: 12px;
-      transform: scaleX(-1);
+      transform: scaleX(-1); /* 鏡反転 */
     }
 
     canvas {
@@ -73,14 +73,11 @@
       transform: translate(-50%, -50%) scale(0.2);
       padding: 20px 40px;
       font-size: 2em;
-
       border-radius: 18px;
       background: rgba(255,255,255,0.9);
       border: 2px solid rgba(0,0,0,0.2);
-
       transition: transform 0.35s ease-out, opacity 0.35s;
       opacity: 0;
-
       pointer-events: none;
       z-index: 9999;
     }
@@ -125,7 +122,7 @@
 <body>
   <h2>Face Recognize App</h2>
 
-  <!-- ★ 音声許可用ボタン（スマホ必須） -->
+  <!-- ★ 音声解除ボタン（スマホ必須） -->
   <button id="startButton">▶ タップして開始</button>
 
   <div class="camera-container">
@@ -284,6 +281,8 @@
       overlay.height = video.videoHeight;
 
       ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+      // canvas反転
       ctx.save();
       ctx.scale(-1, 1);
       ctx.translate(-overlay.width, 0);
@@ -294,10 +293,14 @@
       detections.forEach(det => {
         const box = det.detection.box;
 
-        const cx = box.x + box.width / 2;
-        const cy = box.y + box.
-         width / 2;
+        /* 🔥 座標反転補正 */
+        const flipX = overlay.width - (box.x + box.width);
+        const drawX = flipX;
+        const drawY = box.y;
 
+        /* トラッキングも反転座標で */
+        const cx = drawX + box.width / 2;
+        const cy = drawY + box.height / 2;
         const id = assignTrack(cx, cy);
 
         const desc = Array.from(det.descriptor);
@@ -316,17 +319,17 @@
           color = "green";
           foundTowa = true;
         } else {
-          label = "？";
+          label = "？" + id;
           color = "gray";
         }
 
         ctx.lineWidth = 4;
         ctx.strokeStyle = color;
-        ctx.strokeRect(box.x, box.y, box.width, box.height);
+        ctx.strokeRect(drawX, drawY, box.width, box.height);
 
         ctx.fillStyle = color;
         ctx.font = "24px sans-serif";
-        ctx.fillText(label, box.x + 5, box.y - 8);
+        ctx.fillText(label, drawX + 5, drawY - 8);
       });
 
       ctx.restore();
@@ -351,7 +354,7 @@
       else if (detections.length === 0 && now - lastSeenAnyone > 3000) {
         msg = "見失った…";
         color = "orange";
-        playSound("bad"); 
+        playSound("bad");
       }
       else if (!foundRyo && !foundTowa && detections.length > 0) {
         msg = unknownMessages[Math.floor(Math.random() * unknownMessages.length)];
