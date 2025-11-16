@@ -349,7 +349,7 @@
         playSound("good");
 
         document.body.classList.add("love");
-        setTimeout(() => document.body.classList.remove("love"), 1100);
+        setTimeout(() => document.body.classList.remove("love"), 3000);
       }
       else if (detections.length === 0 && now - lastSeenAnyone > 3000) {
         msg = "見失った…";
@@ -388,5 +388,6 @@
 
 </body>
 </html>
+
 
 
