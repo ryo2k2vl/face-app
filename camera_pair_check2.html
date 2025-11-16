@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+  <title>Face Recognize App (Mobile+Sound)</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+  <style>
+    body {
+      text-align: center;
+      background: #ffeaea;
+      font-family: sans-serif;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      touch-action: none;
+      transition: background 0.5s;
+    }
+
+    /* ---- アンビエント光 ---- */
+    body.love {
+      animation: glow 1.2s ease-out forwards;
+    }
+    @keyframes glow {
+      0% { background: #ffeaea; }
+      50% { background: #ffb3d9; }
+      100% { background: #ffeaea; }
+    }
+
+    h2 {
+      margin-top: 10px;
+      font-size: 1.6em;
+    }
+
+    /* ---- カメラ ---- */
+    .camera-container {
+      position: relative;
+      width: 100%;
+      max-width: 700px;
+      margin: 10px auto;
+    }
+
+    video, canvas {
+      width: 100%;
+      height: auto;
+      border-radius: 12px;
+    }
+
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+
+    #status {
+      font-size: 1.4em;
+      margin-top: 8px;
+      min-height: 1.4em;
+    }
+
+    /* ---- ポップアップ ---- */
+    #popup {
+      position: fixed;
+      top: 30%; /* ←スマホでも邪魔にならない位置 */
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.2);
+      padding: 20px 40px;
+      font-size: 2em;
+
+      border-radius: 18px;
+      background: rgba(255,255,255,0.9);
+      border: 2px solid rgba(0,0,0,0.2);
+
+      transition: transform 0.35s ease-out, opacity 0.35s;
+      opacity: 0;
+
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    #popup.active {
+      transform: translate(-50%, -50%) scale(1);
+      opacity: 1;
+    }
+
+    /* ---- スマホ向けフォント縮小 ---- */
+    @media (max-width: 480px) {
+      h2 { font-size: 1.3em; }
+      #status { font-size: 1.1em; }
+      #popup {
+        font-size: 1.5em;
+        padding: 14px 28px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <h2>Face Recognize App</h2>
+
+  <div class="camera-container">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="overlay"></canvas>
+  </div>
+
+  <div id="status">モデル読み込み中...</div>
+  <div id="popup"></div>
+
+  <script>
+    const video = document.getElementById("video");
+    const overlay = document.getElementById("overlay");
+    const ctx = overlay.getContext("2d");
+    const statusDiv = document.getElementById("status");
+    const popup = document.getElementById("popup");
+
+    let refRyo = null, refTowa = null;
+
+    /* ==========================================================
+        ◆ 1. サウンド準備（Base64）
+    ========================================================== */
+    const soundGood = new Audio(
+      "data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCA..."
+    );
+
+    const soundBad = new Audio(
+      "data:audio/mp3;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQB..."
+    );
+
+    let lastSoundTime = 0;
+    function playSound(type) {
+      const now = Date.now();
+      if (now - lastSoundTime < 1000) return; // 連続再生防止
+      lastSoundTime = now;
+
+      if (type === "good") soundGood.play();
+      if (type === "bad") soundBad.play();
+    }
+
+    /* ==========================================================
+        ◆ 2. 簡易トラッキング
+    ========================================================== */
+    let trackIdCounter = 0;
+    const tracks = [];
+
+    function assignTrack(x, y) {
+      let best = null;
+      let bestDist = 9999;
+
+      tracks.forEach(t => {
+        const d = Math.hypot(t.x - x, t.y - y);
+        if (d < bestDist && d < 85) {
+          bestDist = d;
+          best = t;
+        }
+      });
+
+      if (best) {
+        best.x = x;
+        best.y = y;
+        best.lastSeen = Date.now();
+        return best.id;
+      } else {
+        const newTrack = {
+          id: ++trackIdCounter,
+          x, y,
+          lastSeen: Date.now()
+        };
+        tracks.push(newTrack);
+        return newTrack.id;
+      }
+    }
+
+    function cleanupTracks() {
+      const now = Date.now();
+      for (let i = tracks.length - 1; i >= 0; i--) {
+        if (now - tracks[i].lastSeen > 5000) {
+          tracks.splice(i, 1);
+        }
+      }
+    }
+
+    /* ==========================================================
+        ◆ 3. スマホ向けカメラ設定
+    ========================================================== */
+    async function setupCamera() {
+      const constraints = {
+        video: {
+          facingMode: "user",
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        }
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = stream;
+
+      return new Promise(resolve => {
+        video.onloadedmetadata = () => {
+          video.play();
+          resolve();
+        };
+      });
+    }
+
+    /* ==========================================================
+        ◆ 4. モデルロード
+    ========================================================== */
+    async function loadAll() {
+      statusDiv.textContent = "モデル読み込み中...";
+
+      await faceapi.nets.ssdMobilenetv1.loadFromUri("./models");
+      await faceapi.nets.faceLandmark68Net.loadFromUri("./models");
+      await faceapi.nets.faceRecognitionNet.loadFromUri("./models");
+
+      refRyo = await (await fetch("ryo.json")).json();
+      refTowa = await (await fetch("toto.json")).json();
+
+      statusDiv.textContent = "カメラ起動中...";
+    }
+
+    function distance(a, b) {
+      return Math.sqrt(a.reduce((s, v, i) => s + (v - b[i]) ** 2, 0));
+    }
+
+    /* ==========================================================
+        ◆ 5. ポップアップ
+    ========================================================== */
+    function showPopup(text) {
+      popup.textContent = text;
+      popup.classList.add("active");
+
+      setTimeout(() => {
+        popup.classList.remove("active");
+      }, 1300);
+    }
+
+    /* ==========================================================
+        ◆ 6. メイン処理
+    ========================================================== */
+    let lastSeenAnyone = Date.now();
+    const unknownMessages = ["誰！？", "初めまして？", "新キャラ登場？", "知らない人だ…"];
+
+    async function recognizeLoop() {
+      const detections = await faceapi
+        .detectAllFaces(video)
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+
+      cleanupTracks();
+
+      overlay.width = video.videoWidth;
+      overlay.height = video.videoHeight;
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+      let foundRyo = false;
+      let foundTowa = false;
+
+      detections.forEach(det => {
+        const box = det.detection.box;
+
+        const cx = box.x + box.width / 2;
+        const cy = box.y + box.height / 2;
+
+        const id = assignTrack(cx, cy);
+
+        const desc = Array.from(det.descriptor);
+        const dR = distance(desc, refRyo);
+        const dT = distance(desc, refTowa);
+
+        let label = "";
+        let color = "";
+
+        if (dR < 0.35) {
+          label = "ryo";
+          color = "blue";
+          foundRyo = true;
+        } else if (dT < 0.35) {
+          label = "towa";
+          color = "green";
+          foundTowa = true;
+        } else {
+          label = "？" + id;
+          color = "gray";
+        }
+
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = color;
+        ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+        ctx.fillStyle = color;
+        ctx.font = "24px sans-serif";
+        ctx.fillText(label, box.x + 5, box.y - 8);
+      });
+
+      /* ---- 見失い確認 ---- */
+      const now = Date.now();
+      if (detections.length > 0) {
+        lastSeenAnyone = now;
+      }
+
+      /* ---- 判定メッセージ ---- */
+      let msg = "";
+      let color = "";
+
+      if (foundRyo && foundTowa) {
+        msg = "💚 お似合いカップル！";
+        color = "green";
+        showPopup(msg);
+        playSound("good");
+
+        document.body.classList.add("love");
+        setTimeout(() => document.body.classList.remove("love"), 1100);
+      }
+      else if (detections.length === 0 && now - lastSeenAnyone > 3000) {
+        msg = "見失った…";
+        color = "orange";
+        playSound("bad");
+      }
+      else if (!foundRyo && !foundTowa && detections.length > 0) {
+        msg = unknownMessages[Math.floor(Math.random() * unknownMessages.length)];
+        color = "gray";
+        playSound("bad");
+      }
+      else if (foundRyo && !foundTowa) {
+        msg = "あと とわ！";
+        color = "blue";
+      }
+      else if (!foundRyo && foundTowa) {
+        msg = "あと りょう！";
+        color = "green";
+      }
+
+      statusDiv.innerHTML = `<span style="color:${color}">${msg}</span>`;
+      requestAnimationFrame(recognizeLoop);
+    }
+
+    /* ==========================================================
+        ◆ 7. 初期化
+    ========================================================== */
+    (async () => {
+      await loadAll();
+      await setupCamera();
+      statusDiv.textContent = "解析開始...";
+      recognizeLoop();
+    })();
+  </script>
+
+</body>
+</html>
