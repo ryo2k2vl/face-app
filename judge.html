@@ -20,11 +20,16 @@
       transition: background 0.4s;
     }
 
-    /* 背景固定（判定時） */
-    body.love-fixed {
-      background: #ff7fc9 !important;
+    /* じわじわ濃くなるアニメ（1回再生） */
+    body.love {
+      animation: glow 1s ease-out forwards;
     }
-
+    
+    /* アニメ後に5秒固定される濃ピンク */
+    body.love-fixed {
+      background: #ff7fc9; /* ← 濃いピンク固定 */
+    }
+    
     h2 {
       margin: 10px 0 2px 0;
       font-size: 1.6em;
@@ -172,8 +177,9 @@
     ========================================================== */
     function lockUI() {
       cooldown = true;
-      document.body.classList.add("love-fixed");
-
+    
+      // love-fixed は（アニメ終了時）animationend でつくのでここでは付けない
+    
       setTimeout(() => {
         cooldown = false;
         document.body.classList.remove("love-fixed");
@@ -233,6 +239,15 @@
     /* ==========================================================
         7. ラベル判定 + 描画
     ========================================================== */
+    // glowアニメが終わったら濃いピンクを5秒固定
+    document.body.addEventListener("animationend", (e) => {
+      if (e.animationName === "glow") {
+        document.body.classList.remove("love");       // アニメ終了
+        document.body.classList.add("love-fixed");    // 濃ピンク固定へ移行
+      }
+    });
+
+    
     function processDetections(detections){
 
       let foundRyo=false, foundTowa=false, unknownCount=0;
@@ -310,8 +325,9 @@
         statusDiv.innerHTML = `<span>${txt}</span>`;
 
         if(state === "couple"){
-          pinpon.currentTime = 0;
-          pinpon.play();
+            document.body.classList.add("love");   // ← アニメ開始
+            pinpon.currentTime = 0;
+            pinpon.play();
         }
       }
     }
@@ -376,3 +392,4 @@
 
 </body>
 </html>
+
