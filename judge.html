@@ -359,23 +359,29 @@
     imgInput.onchange = ()=>{
       const file = imgInput.files[0];
       if(!file) return;
-
+    
       const url = URL.createObjectURL(file);
       uploadedImage.src = url;
       uploadedImage.style.display = "block";
       video.style.display="none";
-
+    
       uploadedImage.onload = async ()=>{
         overlay.width = uploadedImage.width;
         overlay.height = uploadedImage.height;
-
+    
         const det = await faceapi
           .detectAllFaces(uploadedImage)
           .withFaceLandmarks()
           .withFaceDescriptors();
-
+    
         const r = processDetections(det);
         handleState(r);
+    
+        // ★ 画像判定後はカメラに戻す
+        setTimeout(() => {
+          uploadedImage.style.display = "none";
+          video.style.display = "block";
+        }, 6000);
       };
     };
 
@@ -392,6 +398,7 @@
 
 </body>
 </html>
+
 
 
 
