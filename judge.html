@@ -5,7 +5,7 @@
   <meta name="viewport"
         content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-  <title>Face Recognize App (Final No-Flicker Edition)</title>
+  <title>Face Recognize App (Camera + Image Button)</title>
 
   <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 
@@ -17,39 +17,33 @@
       overflow: hidden;
       margin: 0;
       padding: 0;
-      user-select: none;
-      touch-action: none;
-      transition: background 0.5s;
+      transition: background 0.4s;
     }
 
-    /* ---- アンビエント光 ---- */
-    body.love {
-      animation: glow 1.2s ease-out forwards;
-    }
-    @keyframes glow {
-      0% { background: #ffeaea; }
-      50% { background: #ffb3d9; }
-      100% { background: #ffeaea; }
+    /* 背景固定（判定時） */
+    body.love-fixed {
+      background: #ff7fc9 !important;
     }
 
     h2 {
-      margin-top: 10px;
+      margin: 10px 0 2px 0;
       font-size: 1.6em;
     }
 
-    /* ---- カメラ ---- */
+    /* カメラと画像共通の領域 */
     .camera-container {
       position: relative;
       width: 100%;
-      max-width: 700px;
-      margin: 10px auto;
+      max-width: 720px;
+      margin: 5px auto 0 auto;
     }
 
-    video, canvas {
+    video, #uploadedImage, canvas {
       width: 100%;
       height: auto;
       border-radius: 12px;
-      transform: scaleX(-1); /* 鏡反転 */
+      transform: scaleX(-1);
+      display: none;
     }
 
     canvas {
@@ -59,35 +53,35 @@
       pointer-events: none;
     }
 
+    /* 状態テキスト */
     #status {
-      font-size: 1.4em;
-      margin-top: 8px;
+      font-size: 1.3em;
       min-height: 1.4em;
+      margin-top: 10px;
     }
 
-    /* ---- ポップアップ ---- */
+    /* popup */
     #popup {
       position: fixed;
-      top: 30%;
+      top: 35%;
       left: 50%;
-      transform: translate(-50%, -50%) scale(0.2);
-      padding: 20px 40px;
+      transform: translate(-50%, -50%);
+      padding: 22px 40px;
       font-size: 2em;
       border-radius: 18px;
-      background: rgba(255,255,255,0.9);
+      background: rgba(255,255,255,0.95);
       border: 2px solid rgba(0,0,0,0.2);
-      transition: transform 0.35s ease-out, opacity 0.35s;
       opacity: 0;
+      transition: opacity 0.3s;
       pointer-events: none;
       z-index: 9999;
     }
 
-    #popup.active {
-      transform: translate(-50%, -50%) scale(1);
+    #popup.show {
       opacity: 1;
     }
 
-    /* ---- Start ボタン ---- */
+    /* スマホ音声解除ボタン */
     #startButton {
       position: fixed;
       top: 45%;
@@ -96,35 +90,45 @@
       font-size: 1.8em;
       padding: 18px 36px;
       z-index: 99999;
-      border: none;
-      border-radius: 14px;
       background: #ff8a8a;
       color: white;
+      border: none;
+      border-radius: 14px;
       box-shadow: 0 4px 10px rgba(0,0,0,0.3);
     }
 
-    @media (max-width: 480px) {
-      h2 { font-size: 1.3em; }
-      #status { font-size: 1.1em; }
-      #popup {
-        font-size: 1.5em;
-        padding: 14px 28px;
-      }
-      #startButton {
-        font-size: 1.4em;
-        padding: 16px 28px;
-      }
+    /* 右上 画像選択ボタン */
+    #selectImageBtn {
+      position: fixed;
+      top: 8px;
+      right: 8px;
+      padding: 10px 14px;
+      font-size: 1em;
+      border-radius: 10px;
+      border: none;
+      background: #ff8cb8;
+      color: white;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+      z-index: 9999;
     }
+
   </style>
 </head>
 
 <body>
+
   <h2>Face Recognize App</h2>
 
+  <!-- スマホ用音声許可 -->
   <button id="startButton">▶ タップして開始</button>
+
+  <!-- 右上：画像選択ボタン -->
+  <button id="selectImageBtn">🖼画像を選択</button>
+  <input type="file" id="imgInput" accept="image/*" style="display:none">
 
   <div class="camera-container">
     <video id="video" autoplay muted playsinline></video>
+    <img id="uploadedImage">
     <canvas id="overlay"></canvas>
   </div>
 
@@ -133,88 +137,52 @@
 
   <script>
     const video = document.getElementById("video");
+    const uploadedImage = document.getElementById("uploadedImage");
     const overlay = document.getElementById("overlay");
     const ctx = overlay.getContext("2d");
+
     const statusDiv = document.getElementById("status");
     const popup = document.getElementById("popup");
     const startButton = document.getElementById("startButton");
+    const selectImageBtn = document.getElementById("selectImageBtn");
+    const imgInput = document.getElementById("imgInput");
 
     let refRyo = null, refTowa = null;
+    let cooldown = false;
+    let lastState = "none";
 
     /* ==========================================================
-        ◆ 1. サウンド
+        1. サウンド（pinpon）
     ========================================================== */
-    const soundGood = new Audio("data:audio/mp3;base64,//uQxAAAA...");
-    const soundBad  = new Audio("data:audio/mp3;base64,//uQxAAAA...");
+    const pinpon = new Audio("sound/pinpon.mp3");
+    pinpon.preload = "auto";
 
     startButton.addEventListener("click", () => {
-      soundGood.play().catch(()=>{});
-      soundBad.play().catch(()=>{});
+      // スマホ用：ユーザー操作で音声権限取得
+      pinpon.play().catch(()=>{});
+      pinpon.pause();
+      pinpon.currentTime = 0;
+
       video.muted = false;
       startButton.style.display = "none";
     });
 
     /* ==========================================================
-        ◆ 2. フラグ（チカチカ防止の心臓）
+        2. UI ロック（5秒）
     ========================================================== */
-    let lastState = "none"; // couple, lost, unknown, need_towa, need_ryo
-    let lastSoundTime = 0;
+    function lockUI() {
+      cooldown = true;
+      document.body.classList.add("love-fixed");
 
-    function playSound(type) {
-      const now = Date.now();
-      if (now - lastSoundTime < 800) return;
-      lastSoundTime = now;
-
-      if (type === "good") soundGood.play();
-      if (type === "bad") soundBad.play();
+      setTimeout(() => {
+        cooldown = false;
+        document.body.classList.remove("love-fixed");
+        popup.classList.remove("show");
+      }, 5000);
     }
 
     /* ==========================================================
-        ◆ 3. トラッキング
-    ========================================================== */
-    let trackIdCounter = 0;
-    const tracks = [];
-
-    function assignTrack(x, y) {
-      let best = null;
-      let bestDist = 9999;
-      tracks.forEach(t => {
-        const d = Math.hypot(t.x - x, t.y - y);
-        if (d < bestDist && d < 85) { bestDist = d; best = t; }
-      });
-
-      if (best) {
-        best.x = x; best.y = y; best.lastSeen = Date.now();
-        return best.id;
-      }
-      const newTrack = { id: ++trackIdCounter, x, y, lastSeen: Date.now() };
-      tracks.push(newTrack);
-      return newTrack.id;
-    }
-
-    function cleanupTracks() {
-      const now = Date.now();
-      for (let i = tracks.length - 1; i >= 0; i--) {
-        if (now - tracks[i].lastSeen > 5000) tracks.splice(i, 1);
-      }
-    }
-
-    /* ==========================================================
-        ◆ 4. カメラ起動
-    ========================================================== */
-    async function setupCamera() {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }
-      });
-      video.srcObject = stream;
-
-      return new Promise(resolve => {
-        video.onloadedmetadata = () => { video.play(); resolve(); };
-      });
-    }
-
-    /* ==========================================================
-        ◆ 5. モデルロード
+        3. モデル読み込み
     ========================================================== */
     async function loadAll() {
       statusDiv.textContent = "モデル読み込み中...";
@@ -224,151 +192,186 @@
 
       refRyo = await (await fetch("ryo.json")).json();
       refTowa = await (await fetch("toto.json")).json();
-      statusDiv.textContent = "カメラ起動中...";
-    }
 
-    function distance(a, b) {
-      return Math.sqrt(a.reduce((s, v, i) => s + (v - b[i]) ** 2, 0));
+      statusDiv.textContent = "開始できます";
     }
 
     /* ==========================================================
-        ◆ 6. ポップアップ
+        4. カメラ起動
     ========================================================== */
-    function showPopup(text) {
-      popup.textContent = text;
-      popup.classList.add("active");
-      setTimeout(() => popup.classList.remove("active"), 1300);
+    async function setupCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video:{ facingMode:"user", width:{ideal:640}, height:{ideal:480} }
+      });
+
+      video.srcObject = stream;
+
+      return new Promise(res=>{
+        video.onloadedmetadata = ()=>{
+          video.play();
+          video.style.display="block";
+          res();
+        };
+      });
     }
 
     /* ==========================================================
-        ◆ 7. メイン処理（チカチカ対策済）
+        5. 共通：距離関数
     ========================================================== */
-    let lastSeenAnyone = Date.now();
-    const unknownMessages = ["誰！？", "初めまして？", "新キャラ登場？", "知らない人だ…"];
+    function distance(a,b){
+      return Math.sqrt(a.reduce((s,v,i)=>s+(v-b[i])**2,0));
+    }
 
-    async function recognizeLoop() {
-      const detections = await faceapi
-        .detectAllFaces(video)
-        .withFaceLandmarks()
-        .withFaceDescriptors();
+    /* ==========================================================
+        6. popup 表示
+    ========================================================== */
+    function popupMsg(txt){
+      popup.textContent = txt;
+      popup.classList.add("show");
+    }
 
-      cleanupTracks();
+    /* ==========================================================
+        7. ラベル判定 + 描画
+    ========================================================== */
+    function processDetections(detections){
 
-      overlay.width = video.videoWidth;
-      overlay.height = video.videoHeight;
+      let foundRyo=false, foundTowa=false, unknownCount=0;
 
-      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      ctx.clearRect(0,0,overlay.width,overlay.height);
       ctx.save();
-      ctx.scale(-1, 1);
-      ctx.translate(-overlay.width, 0);
+      ctx.scale(-1,1);
+      ctx.translate(-overlay.width,0);
 
-      let foundRyo = false;
-      let foundTowa = false;
-
-      detections.forEach(det => {
-        const box = det.detection.box;
-
-        /* 🔥 座標反転補正 */
-        const drawX = overlay.width - (box.x + box.width);
-        const drawY = box.y;
-
-        const cx = drawX + box.width / 2;
-        const cy = drawY + box.height / 2;
-        const id = assignTrack(cx, cy);
+      detections.forEach(det=>{
+        const b = det.detection.box;
+        const dx = overlay.width - (b.x + b.width);
+        const dy = b.y;
 
         const desc = Array.from(det.descriptor);
         const dR = distance(desc, refRyo);
         const dT = distance(desc, refTowa);
 
-        let label = "";
-        let color = "";
+        let label="", color="";
 
-        if (dR < 0.35) {
-          label = "ryo";
-          color = "blue";
-          foundRyo = true;
-        } else if (dT < 0.35) {
-          label = "towa";
-          color = "green";
-          foundTowa = true;
-        } else {
-          label = "？" + id;
-          color = "gray";
+        if(dR < 0.35){
+          label="ryo"; color="blue"; foundRyo=true;
+        }else if(dT < 0.35){
+          label="towa"; color="green"; foundTowa=true;
+        }else{
+          label="？"; color="gray"; unknownCount++;
         }
 
-        ctx.lineWidth = 4;
-        ctx.strokeStyle = color;
-        ctx.strokeRect(drawX, drawY, box.width, box.height);
+        ctx.strokeStyle=color;
+        ctx.lineWidth=4;
+        ctx.strokeRect(dx,dy,b.width,b.height);
 
-        ctx.fillStyle = color;
-        ctx.font = "24px sans-serif";
-        ctx.fillText(label, drawX + 5, drawY - 8);
+        ctx.fillStyle=color;
+        ctx.font="24px sans-serif";
+        ctx.fillText(label, dx+5, dy-6);
       });
 
       ctx.restore();
 
-      /* ---- 状態判定 ---- */
-      const now = Date.now();
-      let currentState = "";
-
-      if (foundRyo && foundTowa) currentState = "couple";
-      else if (detections.length === 0 && now - lastSeenAnyone > 3000) currentState = "lost";
-      else if (!foundRyo && !foundTowa && detections.length > 0) currentState = "unknown";
-      else if (foundRyo && !foundTowa) currentState = "need_towa";
-      else if (!foundRyo && foundTowa) currentState = "need_ryo";
-
-      if (detections.length > 0) lastSeenAnyone = now;
-
-      /* ======================================================
-         ◆ 8. “状態が変わったときだけ” 演出を実行（これがチカチカ防止）
-      ====================================================== */
-      if (currentState !== lastState) {
-        switch (currentState) {
-
-          case "couple":
-            showPopup("💚 お似合いカップル！");
-            playSound("good");
-
-            document.body.classList.add("love");
-            setTimeout(() => document.body.classList.remove("love"), 1100);
-            statusDiv.innerHTML = `<span style="color:green">💚 お似合いカップル！</span>`;
-            break;
-
-          case "lost":
-            playSound("bad");
-            statusDiv.innerHTML = `<span style="color:orange">見失った…</span>`;
-            break;
-
-          case "unknown":
-            playSound("bad");
-            const msg = unknownMessages[Math.floor(Math.random()*unknownMessages.length)];
-            statusDiv.innerHTML = `<span style="color:gray">${msg}</span>`;
-            break;
-
-          case "need_towa":
-            statusDiv.innerHTML = `<span style="color:blue">あと とわ！</span>`;
-            break;
-
-          case "need_ryo":
-            statusDiv.innerHTML = `<span style="color:green">あと りょう！</span>`;
-            break;
-        }
-      }
-
-      lastState = currentState;
-
-      requestAnimationFrame(recognizeLoop);
+      return {foundRyo,foundTowa,unknownCount};
     }
 
     /* ==========================================================
-        ◆ 9. 初期化
+        8. 状態遷移
     ========================================================== */
-    (async () => {
+    function handleState(r) {
+      if(cooldown) return;
+
+      let state="none";
+      let txt="";
+
+      if(r.foundRyo && r.foundTowa){
+        state="couple";
+        txt="💚 お似合いカップル！";
+      }
+      else if((r.foundRyo || r.foundTowa) && r.unknownCount > 0){
+        state="mismatch";
+        txt="💔 不似合いカップル…";
+      }
+      else if(r.foundRyo && !r.foundTowa){
+        state="need_towa"; txt="あと とわ！";
+      }
+      else if(!r.foundRyo && r.foundTowa){
+        state="need_ryo"; txt="あと りょう！";
+      }
+      else if(r.unknownCount>0){
+        state="unknown"; txt="誰？";
+      }
+
+      if(state !== lastState){
+        lastState = state;
+
+        lockUI();
+        popupMsg(txt);
+        statusDiv.innerHTML = `<span>${txt}</span>`;
+
+        if(state === "couple"){
+          pinpon.currentTime = 0;
+          pinpon.play();
+        }
+      }
+    }
+
+    /* ==========================================================
+        9. カメラループ
+    ========================================================== */
+    async function cameraLoop(){
+      const det = await faceapi
+        .detectAllFaces(video)
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+
+      overlay.width = video.videoWidth;
+      overlay.height = video.videoHeight;
+
+      const r = processDetections(det);
+      handleState(r);
+
+      requestAnimationFrame(cameraLoop);
+    }
+
+    /* ==========================================================
+        10. 画像選択
+    ========================================================== */
+
+    selectImageBtn.onclick = ()=> imgInput.click();
+
+    imgInput.onchange = ()=>{
+      const file = imgInput.files[0];
+      if(!file) return;
+
+      const url = URL.createObjectURL(file);
+      uploadedImage.src = url;
+      uploadedImage.style.display = "block";
+      video.style.display="none";
+
+      uploadedImage.onload = async ()=>{
+        overlay.width = uploadedImage.width;
+        overlay.height = uploadedImage.height;
+
+        const det = await faceapi
+          .detectAllFaces(uploadedImage)
+          .withFaceLandmarks()
+          .withFaceDescriptors();
+
+        const r = processDetections(det);
+        handleState(r);
+      };
+    };
+
+    /* ==========================================================
+        11. 初期化
+    ========================================================== */
+    (async()=>{
       await loadAll();
       await setupCamera();
-      statusDiv.textContent = "解析開始...";
-      recognizeLoop();
+      cameraLoop();
     })();
+
   </script>
 
 </body>
